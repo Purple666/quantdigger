@@ -47,6 +47,9 @@ wiki文档_
     * Anaconda用户可以用
         >>> conda install -c quantopian ta-lib
 
+* finance依赖
+  * 安装 https://github.com/matplotlib/mpl_finance
+
 
 策略组合DEMO
 -----------

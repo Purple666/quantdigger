@@ -1,12 +1,5 @@
 # -*- coding: utf-8 -*-
 
-# @file plot_strategy.py
-# @brief 策略运行和图表展示
-# @author wondereamer
-# @version 0.2
-# @date 2015-12-09
-
-import six
 from quantdigger import (
     Strategy,
     MA,
@@ -82,7 +75,7 @@ if __name__ == '__main__':
                            {'capital': 50000.0, 'ratio': [0.5, 0.5]})
     run()
     stop = timeit.default_timer()
-    six.print_("运行耗时: %d秒" % ((stop - start)))
+    print("运行耗时: %d秒" % ((stop - start)))
 
     # 绘制k线，交易信号线
     from quantdigger.digger import finance, plotting
@@ -97,4 +90,4 @@ if __name__ == '__main__':
     # 绘制净值曲线
     plotting.plot_curves([curve.networth])
     # 打印统计信息
-    six.print_(finance.summary_stats(curve, 252))
+    print(finance.summary_stats(curve, 252))
