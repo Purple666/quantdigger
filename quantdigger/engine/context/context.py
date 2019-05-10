@@ -1,11 +1,4 @@
 # -*- coding: utf-8 -*-
-##
-# @file data.py
-# @brief 数据上下文，交易上下文。
-# @author wondereamer
-# @version 0.2
-# @date 2015-12-09
-
 import six
 import datetime
 
@@ -56,7 +49,7 @@ class Context(object):
         else:
             self._cur_data_context.ith_comb, self._cur_data_context.ith_strategy = ith_comb, ith_strategy
 
-    def time_aligned(self):
+    def pcontract_time_aligned(self):
         return (self._cur_data_context.datetime[0] <= self.ctx_datetime and
                 self._cur_data_context.next_datetime <= self.ctx_datetime)
         # 第一根是必须运行
@@ -71,32 +64,35 @@ class Context(object):
             self.ctx_datetime = min(self._cur_data_context.next_datetime,
                                     self.ctx_datetime)
             try:
-                self.ctx_dt_series.data[self.ctx_curbar] = min(
-                    self._cur_data_context.next_datetime, self.ctx_datetime)
+                self.ctx_dt_series.data[self.ctx_curbar] = self.ctx_datetime
             except IndexError:
-                self.ctx_dt_series.data.append(
-                    min(self._cur_data_context.next_datetime, self.ctx_datetime))
+                self.ctx_dt_series.data.append(self.ctx_datetime)
             return True
+
         hasnext, data = self._cur_data_context.rolling_forward()
         if not hasnext:
             return False
+
         self.ctx_dt_series.curbar = self.ctx_curbar
-        try:
-            self.ctx_dt_series.data[self.ctx_curbar] = min(
-                self._cur_data_context.next_datetime, self.ctx_datetime)
-        except IndexError:
-            self.ctx_dt_series.data.append(min(
-                self._cur_data_context.next_datetime, self.ctx_datetime))
         self.ctx_datetime = min(
             self._cur_data_context.next_datetime, self.ctx_datetime)
+        try:
+            self.ctx_dt_series.data[self.ctx_curbar] = self.ctx_datetime
+        except IndexError:
+            self.ctx_dt_series.data.append(self.ctx_datetime)
         return True
 
-    def update_user_vars(self):
+    def update_user_vars_of_stragegy(self, comb_index, strategy_index):
         """ 更新用户在策略中定义的变量, 如指标等。 """
+        self.switch_to_strategy(comb_index, strategy_index)
         self._cur_data_context.update_user_vars()
+        return True
 
-    def update_system_vars(self):
+    def update_system_vars_of_pcontract(self, s_pcontract):
         """ 更新用户在策略中定义的变量, 如指标等。 """
+        self.switch_to_pcontract(s_pcontract)
+        if not self.pcontract_time_aligned():
+            return
         self._cur_data_context.update_system_vars()
         self._ticks[self._cur_data_context.contract] = \
             self._cur_data_context.close[0]

@@ -48,12 +48,12 @@ class ExecuteUnit(object):
                                                            dt_end,
                                                            n,
                                                            spec_date)
+        self._all_pcontracts = list(self._all_data.keys())
         self.context = context.Context(self._all_data, self._max_window)
 
     def _init_strategies(self):
-        for pcon, dcontext in six.iteritems(self._all_data):
-            # switch context
-            self.context.switch_to_pcontract(pcon)
+        for s_pcontract in self._all_pcontracts:
+            self.context.switch_to_pcontract(s_pcontract)
             for i, combination in enumerate(self._combs):
                 for j, s in enumerate(combination):
                     self.context.switch_to_strategy(i, j)
@@ -136,31 +136,51 @@ class ExecuteUnit(object):
                        len(self._combs) - 1)
 
     def run(self):
-        # @TODO max_window 可用来显示回测进度
         # 初始化策略自定义时间序列变量
         logger.info("runing strategies...")
         self._init_strategies()
         pbar = progressbar.ProgressBar().start()
         # todo 对单策略优化
         has_next = True
-        # 遍历每个数据轮, 次数为数据的最大长度
-        for pcon, data in six.iteritems(self._all_data):
-            self.context.switch_to_pcontract(pcon)
-            self.context.rolling_forward()
         while True:
-            self.context.on_bar = False
-            # 遍历数据轮的所有合约
-            for pcon, data in six.iteritems(self._all_data):
-                self.context.switch_to_pcontract(pcon)
-                if self.context.time_aligned():
-                    self.context.update_system_vars()
-                    # 组合遍历
+            # Feeding data of latest.
+            toremove = []
+            for s_pcontract in self._all_pcontracts:
+                self.context.switch_to_pcontract(s_pcontract)
+                has_next = self.context.rolling_forward()
+                if not has_next:
+                    toremove.append(s_pcontract)
+            #
+            if toremove:
+                for s_pcontract in toremove:
+                    self._all_pcontracts.remove(s_pcontract)
+                if len(self._all_pcontracts) == 0:
+                    # 策略退出后的处理
+                    self.context.switch_to_pcontract(self._default_pcontract)
                     for i, combination in enumerate(self._combs):
-                        # 策略遍历
                         for j, s in enumerate(combination):
                             self.context.switch_to_strategy(i, j)
-                            self.context.update_user_vars()
-                            s.on_symbol(self.context)
+                            s.on_exit(self.context)
+                    pbar.finish()
+                    return
+
+            self.context.on_bar = False
+            # Updating global context variables like
+            # close price and context time.
+            for s_pcontract in self._all_pcontracts:
+                self.context.update_system_vars_of_pcontract(s_pcontract)
+            # Calculating user context variables.
+            for s_pcontract in self._all_pcontracts:
+                # Iterating over combinations.
+                self.context.switch_to_pcontract(s_pcontract)
+                if not self.context.pcontract_time_aligned():
+                    continue
+                for i, combination in enumerate(self._combs):
+                    # Iterating over strategies.
+                    for j, s in enumerate(combination):
+                        self.context.update_user_vars_of_stragegy(i, j)
+                        s.on_symbol(self.context)
+
             # 确保单合约回测的默认值
             self.context.switch_to_pcontract(self._default_pcontract)
             self.context.on_bar = True
@@ -176,28 +196,13 @@ class ExecuteUnit(object):
                     if not tick_test:
                         # 保证有可能在当根Bar成交
                         self.context.process_trading_events(at_baropen=False)
-            # six.print_(self.context.ctx_datetime)
+
+            # log.info(self.context.ctx_datetime)
             self.context.ctx_datetime = datetime(2100, 1, 1)
             self.context.ctx_curbar += 1
             if self.context.ctx_curbar <= self._max_window:
                 pbar.update(self.context.ctx_curbar * 100.0 / self._max_window)
-            #
-            toremove = []
-            for pcon, data in six.iteritems(self._all_data):
-                self.context.switch_to_pcontract(pcon)
-                has_next = self.context.rolling_forward()
-                if not has_next:
-                    toremove.append(pcon)
-            if toremove:
-                for key in toremove:
-                    del self._all_data[key]
-                if len(self._all_data) == 0:
-                    # 策略退出后的处理
-                    for i, combination in enumerate(self._combs):
-                        for j, s in enumerate(combination):
-                            self.context.switch_to_strategy(i, j)
-                            s.on_exit(self.context)
-                    return
+
         pbar.finish()
 
     def _load_data(self, strpcons, dt_start, dt_end, n, spec_date):
