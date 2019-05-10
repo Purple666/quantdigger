@@ -51,14 +51,6 @@ class ExecuteUnit(object):
         self._all_pcontracts = list(self._all_data.keys())
         self.context = context.Context(self._all_data, self._max_window)
 
-    def _init_strategies(self):
-        for s_pcontract in self._all_pcontracts:
-            self.context.switch_to_pcontract(s_pcontract)
-            for i, combination in enumerate(self._combs):
-                for j, s in enumerate(combination):
-                    self.context.switch_to_strategy(i, j)
-                    s.on_init(self.context)
-
     @deprecated
     def _parse_pcontracts(self, pcontracts):
         # @TODO test
@@ -135,6 +127,15 @@ class ExecuteUnit(object):
                        self.pcontracts[0],
                        len(self._combs) - 1)
 
+    def _init_strategies(self):
+        for s_pcontract in self._all_pcontracts:
+            self.context.switch_to_pcontract(s_pcontract)
+            self.context.update_strategies_env(self._combs, s_pcontract)
+            for i, combination in enumerate(self._combs):
+                for j, s in enumerate(combination):
+                    self.context.switch_to_strategy(i, j)
+                    s.on_init(self.context)
+
     def run(self):
         # 初始化策略自定义时间序列变量
         logger.info("runing strategies...")
@@ -157,6 +158,8 @@ class ExecuteUnit(object):
                 if len(self._all_pcontracts) == 0:
                     # 策略退出后的处理
                     self.context.switch_to_pcontract(self._default_pcontract)
+                    self.context.update_strategies_env(self._combs,
+                                                       self._default_pcontract)
                     for i, combination in enumerate(self._combs):
                         for j, s in enumerate(combination):
                             self.context.switch_to_strategy(i, j)
@@ -175,14 +178,18 @@ class ExecuteUnit(object):
                 self.context.switch_to_pcontract(s_pcontract)
                 if not self.context.pcontract_time_aligned():
                     continue
+                self.context.update_strategies_env(self._combs, s_pcontract)
                 for i, combination in enumerate(self._combs):
                     # Iterating over strategies.
                     for j, s in enumerate(combination):
-                        self.context.update_user_vars_of_stragegy(i, j)
+                        self.context.switch_to_strategy(i, j)
+                        self.context.update_strategy_vars(i, j)
                         s.on_symbol(self.context)
 
             # 确保单合约回测的默认值
             self.context.switch_to_pcontract(self._default_pcontract)
+            self.context.update_strategies_env(self._combs,
+                                               self._default_pcontract)
             self.context.on_bar = True
             # 遍历组合策略每轮数据的最后处理
             tick_test = settings['tick_test']

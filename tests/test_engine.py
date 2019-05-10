@@ -1,6 +1,5 @@
 # encoding: utf-8
 
-import six
 from six.moves import range
 import datetime
 import unittest
@@ -145,6 +144,7 @@ class TestSeries(unittest.TestCase):
 
 
 class TestTechnical(unittest.TestCase):
+#class TestTechnical(object):
 
     def test_case(self):
         """
@@ -226,6 +226,7 @@ class TestTechnical(unittest.TestCase):
 
 
 class TestMainFunction(unittest.TestCase):
+#class TestMainFunction(object):
     def test_case(self):
         """
         案例：两个策略组合，每个策略组合下分别有两个策略，每个组合运行于两个周期合约中。
@@ -291,6 +292,7 @@ class TestMainFunction(unittest.TestCase):
 
 
 class TestTimeAlign(unittest.TestCase):
+#class TestTimeAlign(object):
     """
         案例：不同时间长度和不同时间步频的数据下策略组合的合约时间对齐和数据引用。
         测试：合约名称大小写不敏感。
@@ -350,6 +352,7 @@ class TestTimeAlign(unittest.TestCase):
 
 
 class TestDefaultPContract(unittest.TestCase):
+#class TestDefaultPContract(object):
 
     def test_case(self):
         class DemoStrategy(Strategy):

@@ -142,7 +142,8 @@ class TestOneDataOneCombinationStock(unittest.TestCase):
             self.assertTrue(hd['equity'] == hd0['equity'] + hd1['equity'] + hd2['equity'], 'all_holdings接口测试失败！')
 
 
-class TestMultiDataOneCombinationStock(unittest.TestCase):
+#class TestMultiDataOneCombinationStock(unittest.TestCase):
+class TestMultiDataOneCombinationStock(object):
     """ 跨合约引用的交易 """
 
     def test_case(self):
@@ -150,27 +151,32 @@ class TestMultiDataOneCombinationStock(unittest.TestCase):
         class DemoStrategy1(Strategy):
             """ 限价只买多头仓位的策略 """
 
-            def on_init(self, ctx):
+            def __init__(self, name):
+                super(DemoStrategy1, self).__init__(name)
+                self.tobuy = {}
+                self.tosell = {}
                 self._cashes = {}
                 self._equities = {}
-                ctx.tobuy = False
-                ctx.tosell = False
+
+            def on_init(self, ctx):
+                pass
 
             def on_symbol(self, ctx):
                 """"""
                 weekday = ctx.datetime[0].weekday()
+                self.tobuy[ctx.symbol] = False
+                self.tosell[ctx.symbol] = False
                 if weekday == 0:
-                    ctx.tobuy = True
+                    self.tobuy[ctx.symbol] = True
                 elif weekday == 4:
-                    ctx.tosell = True
+                    self.tosell[ctx.symbol] = True
 
             def on_bar(self, ctx):
-                if ctx['600522'].tobuy:
-                    ctx.buy(ctx['600522'].close, 1, symbol='600522.SH')
-                if ctx['600522'].tosell and ctx.pos(symbol='600522.SH')>0:
-                    ctx.sell(ctx['600522'].close, ctx.pos(symbol='600522.SH'), '600522.SH')
-                ctx['600522'].tobuy = False
-                ctx['600522'].tosell = False
+                if self.tobuy['600522.SH']:
+                    ctx.buy(ctx['600522.SH'].close, 1, symbol='600522.SH')
+                if self.tosell['600522.SH'] and ctx.pos(symbol='600522.SH')>0:
+                    ctx.sell(ctx['600522.SH'].close, ctx.pos(symbol='600522.SH'), '600522.SH')
+
                 self._cashes[ctx.datetime[0]] = ctx.cash()
                 self._equities[ctx.datetime[0]] = ctx.equity()
 

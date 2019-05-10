@@ -12,6 +12,8 @@ from six.moves import queue
 from quantdigger.engine.blotter import SimpleBlotter
 from quantdigger.engine.exchange import Exchange
 from quantdigger.event import Event, EventsPool, SignalEvent, OnceEvent
+from quantdigger.engine.series import SeriesBase
+from quantdigger.technicals.base import TechnicalBase
 from quantdigger.datastruct import (
     Order,
     TradeSide,
@@ -21,13 +23,6 @@ from quantdigger.datastruct import (
 
 
 class StrategyContext(object):
-    """ 策略组合
-
-    :ivar name: 策略名
-    :ivar blotter: 订单管理
-    :ivar exchange: 价格撮合器
-    :ivar marks: 绘图标志集合
-    """
     def __init__(self, name, settings={}):
         self.events_pool = EventsPool()
         # @TODO merge blotter and exchange
@@ -39,6 +34,14 @@ class StrategyContext(object):
         self._orders = []
         self._datetime = None
         self._cancel_now = False  # 是当根bar还是下一根bar撤单成功。
+        self._series = {}  # {{}}
+        self._technicals = {}
+        self._normal_vars= {}
+        self._all_vars = {}
+        self._s_cur_pcontract = ""
+
+    def set_cur_pcontract(self, s_pcontract):
+        self._s_cur_pcontract = s_pcontract
 
     def update_environment(self, dt, ticks, bars):
         """ 更新模拟交易所和订单管理器的数据，时间,持仓 """
@@ -46,7 +49,6 @@ class StrategyContext(object):
         self.exchange.update_datetime(dt)
         self.blotter.update_data(ticks, bars)
         self._datetime = dt
-        return
 
     def process_trading_events(self, at_baropen):
         """ 提交订单，撮合，更新持仓 """
@@ -221,3 +223,42 @@ class StrategyContext(object):
     def day_profit(self, contract):
         """ 当前持仓的浮动盈亏 """
         pass
+
+    def __getattr__(self, name):
+        try:
+            return self._all_vars[self._s_cur_pcontract][name]
+        except KeyError:
+            return self.__getattribute__(name)
+
+    def add_item(self, name, value):
+        """ 添加用户初始化的变量。 """
+        assert(self._s_cur_pcontract)
+        variables = self._all_vars.setdefault(self._s_cur_pcontract, {})
+        variables[name] = value
+
+        if isinstance(value, SeriesBase):
+            series = self._series.setdefault(self._s_cur_pcontract, {})
+            series[name] = value
+        elif isinstance(value, TechnicalBase):
+            technicals = self._technicals.setdefault(self._s_cur_pcontract, {})
+            technicals[name] = value
+        else:
+            normal_vars = self._normal_vars.setdefault(self._s_cur_pcontract,
+                                                       {})
+            normal_vars[name] = value
+
+    def update_strategy_vars(self, curbar):
+        # Update series defined by user if exist.
+        series = self._series.get(self._s_cur_pcontract, {}).values()
+        for s in series:
+            s.update_curbar(curbar)
+            s.duplicate_last_element()
+        # Update technicals if exist.
+        technicals = self._technicals.get(self._s_cur_pcontract, {}).values()
+        for tec in technicals:
+            if tec.is_multiple:
+                for s in six.itervalues(tec.series):
+                    s.update_curbar(curbar)
+            else:
+                for s in tec.series:
+                    s.update_curbar(curbar)

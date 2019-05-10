@@ -2,13 +2,13 @@
 import six
 import datetime
 
+from quantdigger.engine.series import SeriesBase
 from quantdigger.datastruct import (
     Direction,
     PriceType,
     Contract,
 )
 from quantdigger.engine.series import DateTimeSeries
-from quantdigger.engine.context.data_context import DataContextAttributeHelper
 
 
 class Context(object):
@@ -27,27 +27,51 @@ class Context(object):
         self._data_contexts = {}       # str(PContract): DataContext
         for key, value in six.iteritems(data):
             self._data_contexts[key] = value
-            self._data_contexts[key.split('-')[0]] = value
-            self._data_contexts[key.split('.')[0]] = value
+            # PContract -- 'IF000.SHEF-10.Minutes'
+            # 简化策略用户的合约输入。
+            symbol_exchange = key.split('-')[0]
+            num_same_contract = filter(
+                lambda x: x.startswith(symbol_exchange), data.keys())
+            if num_same_contract == 1:
+                self._data_contexts[symbol_exchange] = value
+
+            symbol = key.split('.')[0]
+            num_same_contract = filter(
+                lambda x: x.startswith(symbol), data.keys())
+            if num_same_contract == 1:
+                self._data_contexts[symbol] = value
         # latest price data
-        # Contract -> float
-        # Contract -> Bar
-        self._ticks = {}
-        self._bars = {}
+        self._ticks = {}  # Contract -> float
+        self._bars = {}   # Contract -> Bar
+
+    def clone(self, obj):
+        ctx = Context(None, 1)
+        ctx.ctx_dt_series = obj.ctx_dt_series
+        ctx.ctx_datetime = obj.ctx_datetime
+        ctx.ctx_curbar= obj.ctx_curbar
+        ctx.ctx_curbar= obj.ctx_curbar
+        ctx.on_bar = obj.on_bar
+        ctx._strategy_contexts = obj._strategy_contexts
+        ctx._cur_strategy_context = obj._cur_strategy_context
+        ctx._cur_data_context = obj._cur_data_context
+        ctx._data_contexts = obj._data_contexts
+        ctx._ticks = obj._ticks
+        ctx._bars = obj._bars
+        return ctx
 
     def add_strategy_context(self, ctxs):
         self._strategy_contexts.append(ctxs)
 
-    def switch_to_pcontract(self, pcon):
-        self._cur_data_context = self._data_contexts[pcon]
+    def switch_to_pcontract(self, s_pcontract):
+        self._cur_data_context = self._data_contexts[s_pcontract]
+
+    def update_strategies_env(self, strategies, s_pcontract):
+        for ith_comb, combination in enumerate(strategies):
+            for jth_strategy, s in enumerate(combination):
+                self._strategy_contexts[ith_comb][jth_strategy].set_cur_pcontract(s_pcontract)
 
     def switch_to_strategy(self, ith_comb, ith_strategy):
         self._cur_strategy_context = self._strategy_contexts[ith_comb][ith_strategy]
-        if self.on_bar:
-            for data_context in six.itervalues(self._data_contexts):
-                data_context.ith_comb, data_context.ith_strategy = ith_comb, ith_strategy
-        else:
-            self._cur_data_context.ith_comb, self._cur_data_context.ith_strategy = ith_comb, ith_strategy
 
     def pcontract_time_aligned(self):
         return (self._cur_data_context.datetime[0] <= self.ctx_datetime and
@@ -82,11 +106,10 @@ class Context(object):
             self.ctx_dt_series.data.append(self.ctx_datetime)
         return True
 
-    def update_user_vars_of_stragegy(self, comb_index, strategy_index):
+    def update_strategy_vars(self, comb_index, strategy_index):
         """ 更新用户在策略中定义的变量, 如指标等。 """
-        self.switch_to_strategy(comb_index, strategy_index)
-        self._cur_data_context.update_user_vars()
-        return True
+        self._cur_strategy_context.update_strategy_vars(
+            self._cur_data_context._curbar)
 
     def update_system_vars_of_pcontract(self, s_pcontract):
         """ 更新用户在策略中定义的变量, 如指标等。 """
@@ -112,11 +135,15 @@ class Context(object):
 
     def __getitem__(self, strpcon):
         """ 获取跨品种合约 """
-        return DataContextAttributeHelper(
-            self._data_contexts[strpcon.upper()])
+        return self._data_contexts[strpcon.upper()]
 
     def __getattr__(self, name):
-        return self._cur_data_context.get_item(name)
+        if hasattr(self._cur_data_context, name):
+            return getattr(self._cur_data_context, name)
+        elif hasattr(self._cur_strategy_context, name):
+            return getattr(self._cur_strategy_context, name)
+        else:
+            return self.__getattribute__(name)
 
     def __setattr__(self, name, value):
         if name in [
@@ -126,7 +153,10 @@ class Context(object):
         ]:
             super(Context, self).__setattr__(name, value)
         else:
-            self._cur_data_context.add_item(name, value)
+            #  TODO: check none reserved attribute #
+            if isinstance(value, SeriesBase):
+                value.reset_data([], self._cur_data_context.size)
+            self._cur_strategy_context.add_item(name, value)
 
     @property
     def strategy(self):
