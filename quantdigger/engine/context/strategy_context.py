@@ -19,29 +19,61 @@ from quantdigger.datastruct import (
     TradeSide,
     Direction,
     PositionKey,
+    PriceType,
+    Contract
 )
 
 
-class StrategyContext(object):
+class PlotterDelegator(object):
+    """docstring for PlotterDele"""
+    def __init__(self):
+        self.marks = [{}, {}]
+
+    def plot_line(self, name, ith_window, x, y,
+                  styles, lw=1, ms=10, twinx=False):
+        """ 绘制曲线
+
+        Args:
+            name (str): 标志名称
+            ith_window (int): 在第几个窗口显示，从1开始。
+            x (datetime): 时间坐标
+            y (float): y坐标
+            styles (str): 控制颜色，线的风格，点的风格
+            lw (int): 线宽
+            ms (int): 点的大小
+        """
+        mark = self.marks[0].setdefault(name, [])
+        mark.append((ith_window - 1, twinx, x - 1, float(y), styles, lw, ms))
+
+    def plot_text(self, name, ith_window, x, y, text,
+                  color='black', size=15, rotation=0):
+
+        """ 绘制文本
+
+        Args:
+            name (str): 标志名称
+            ith_window (int): 在第几个窗口显示，从1开始。
+            x (float): x坐标
+            y (float): y坐标
+            text (str): 文本内容
+            color (str): 颜色
+            size (int): 字体大小
+            rotation (float): 旋转角度
+        """
+        mark = self.marks[1].setdefault(name, [])
+        mark.append((ith_window - 1, x - 1, float(y), text, color, size, rotation))
+
+
+class TradingDelegator(object):
+    """"""
     def __init__(self, name, settings={}):
         self.events_pool = EventsPool()
         # @TODO merge blotter and exchange
         self.blotter = SimpleBlotter(name, self.events_pool, settings)
         self.exchange = Exchange(name, self.events_pool, strict=True)
-        self.name = name
-        # 0: line_marks, 1: text_marks
-        self.marks = [{}, {}]
         self._orders = []
         self._datetime = None
         self._cancel_now = False  # 是当根bar还是下一根bar撤单成功。
-        self._series = {}  # {{}}
-        self._technicals = {}
-        self._normal_vars= {}
-        self._all_vars = {}
-        self._s_cur_pcontract = ""
-
-    def set_cur_pcontract(self, s_pcontract):
-        self._s_cur_pcontract = s_pcontract
 
     def update_environment(self, dt, ticks, bars):
         """ 更新模拟交易所和订单管理器的数据，时间,持仓 """
@@ -89,38 +121,21 @@ class StrategyContext(object):
                 self.exchange.make_market(self.blotter._bars, at_baropen)
         self.blotter.update_status(self._datetime, at_baropen)
 
-    def plot_line(self, name, ith_window, x, y, styles, lw=1, ms=10, twinx=False):
-        """ 绘制曲线
+    def buy(self, price, quantity, symbol=None):
+        """ 开多仓
 
         Args:
-            name (str): 标志名称
-            ith_window (int): 在第几个窗口显示，从1开始。
-            x (datetime): 时间坐标
-            y (float): y坐标
-            styles (str): 控制颜色，线的风格，点的风格
-            lw (int): 线宽
-            ms (int): 点的大小
+            price (float): 价格, 0表市价。
+            quantity (int): 数量。
+            symbol (str): 合约
         """
-        mark = self.marks[0].setdefault(name, [])
-        mark.append((ith_window, twinx, x, y, styles, lw, ms))
-
-    def plot_text(self, name, ith_window, x, y, text, color='black', size=15, rotation=0):
-        """ 绘制文本
-
-        Args:
-            name (str): 标志名称
-            ith_window (int): 在第几个窗口显示，从1开始。
-            x (float): x坐标
-            y (float): y坐标
-            text (str): 文本内容
-            color (str): 颜色
-            size (int): 字体大小
-            rotation (float): 旋转角度
-        """
-        mark = self.marks[1].setdefault(name, [])
-        mark.append((ith_window, x, y, text, color, size, rotation))
-
-    def buy(self, price, quantity, price_type, contract):
+        if not self.on_bar:
+            raise Exception('只有on_bar函数内能下单！')
+        if symbol:
+            contract = Contract(symbol) if isinstance(symbol, str) else symbol
+        else:
+            contract = self._cur_data_context.contract
+        price_type = PriceType.MKT if price == 0 else PriceType.LMT
         self._orders.append(Order(
             None,
             contract,
@@ -131,7 +146,21 @@ class StrategyContext(object):
             quantity
         ))
 
-    def sell(self, price, quantity, price_type, contract):
+    def sell(self, price, quantity, symbol=None):
+        """ 平多仓。
+
+        Args:
+           price (float): 价格, 0表市价。
+           quantity (int): 数量。
+           symbol (str): 合约
+        """
+        if not self.on_bar:
+            raise Exception('只有on_bar函数内能下单！')
+        if symbol:
+            contract = Contract(symbol) if isinstance(symbol, str) else symbol
+        else:
+            contract = self._cur_data_context.contract
+        price_type = PriceType.MKT if price == 0 else PriceType.LMT
         self._orders.append(Order(
             None,
             contract,
@@ -142,7 +171,21 @@ class StrategyContext(object):
             quantity
         ))
 
-    def short(self, price, quantity, price_type, contract):
+    def short(self, price, quantity, symbol=None):
+        """ 开空仓
+
+        Args:
+            price (float): 价格, 0表市价。
+            quantity (int): 数量。
+            symbol (str): 合约
+        """
+        if not self.on_bar:
+            raise Exception('只有on_bar函数内能下单！')
+        if symbol:
+            contract = Contract(symbol) if isinstance(symbol, str) else symbol
+        else:
+            contract = self._cur_data_context.contract
+        price_type = PriceType.MKT if price == 0 else PriceType.LMT
         self._orders.append(Order(
             None,
             contract,
@@ -153,7 +196,21 @@ class StrategyContext(object):
             quantity
         ))
 
-    def cover(self, price, quantity, price_type, contract):
+    def cover(self, price, quantity, symbol=None):
+        """ 平空仓。
+
+        Args:
+           price (float): 价格, 0表市价。
+           quantity (int): 数量。
+           symbol (str): 合约
+        """
+        if not self.on_bar:
+            raise Exception('只有on_bar函数内能下单！')
+        if symbol:
+            contract = Contract(symbol) if isinstance(symbol, str) else symbol
+        else:
+            contract = self._cur_data_context.contract
+        price_type = PriceType.MKT if price == 0 else PriceType.LMT
         self._orders.append(Order(
             None,
             contract,
@@ -163,6 +220,7 @@ class StrategyContext(object):
             float(price),
             quantity
         ))
+
 
     def cancel(self, orders):
         """ 撤单
@@ -192,19 +250,55 @@ class StrategyContext(object):
     @property
     def open_orders(self):
         """ 未成交的订单 """
-        return self.blotter.open_orders
+        return list(self.blotter.open_orders)
 
     def all_positions(self):
+        """ 返回所有持仓列表 [Position] """
         return list(six.itervalues(self.blotter.positions))
 
-    def position(self, contract, direction):
+    def position(self, direction='long', symbol=None):
+        """ 合约当前持仓仓位。
+
+        Args:
+            direction (str/int): 持仓方向。多头 - 'long' / 1 ；空头 - 'short'  / 2
+            , 默认为多头。
+
+            symbol (str): 字符串合约，默认为None表示主合约。
+
+        Returns:
+            Position. 该合约的持仓
+        """
+        if not self.on_bar:
+            raise Exception('只有on_bar函数内能查询当前持仓！')
+        direction = Direction.arg_to_type(direction)
+        contract = Contract(symbol) if symbol else \
+            self._cur_data_context.contract
+        # @TODO assert direction
         try:
             poskey = PositionKey(contract, direction)
             return self.blotter.positions[poskey]
         except KeyError:
             return None
 
-    def pos(self, contract, direction):
+    def pos(self, direction='long', symbol=None):
+        """  合约的当前可平仓位。
+
+        Args:
+            direction (str/int): 持仓方向。多头 - 'long' / 1 ；空头 - 'short'  / 2
+            , 默认为多头。
+
+            symbol (str): 字符串合约，默认为None表示主合约。
+
+        Returns:
+            int. 该合约的持仓数目。
+        """
+        if not self.on_bar:
+            raise Exception('只有on_bar函数内能查询当前持仓！')
+        direction = Direction.arg_to_type(direction)
+        # @TODO symbol xxxxx
+        contract = Contract(symbol) if symbol else \
+            self._cur_data_context.contract
+        # @TODO assert direction
         try:
             poskey = PositionKey(contract, direction)
             return self.blotter.positions[poskey].closable
@@ -212,17 +306,54 @@ class StrategyContext(object):
             return 0
 
     def cash(self):
+        """ 现金。 """
+        if not self.on_bar:
+            raise Exception('只有on_bar函数内能查询可用资金！')
         return self.blotter.holding['cash']
 
     def equity(self):
+        """ 当前权益 """
+        if not self.on_bar:
+            raise Exception('只有on_bar函数内能查询当前权益！')
         return self.blotter.holding['equity']
 
-    def profit(self, contract):
+    def profit(self, contract=None):
+        """ 当前持仓的历史盈亏 """
+        # if not self.on_bar:
+            # logger.warn('只有on_bar函数内能查询总盈亏！')
+            # return
         pass
 
-    def day_profit(self, contract):
+    def day_profit(self, contract=None):
         """ 当前持仓的浮动盈亏 """
+        #if not self.on_bar:
+            #logger.warn('只有on_bar函数内能查询浮动盈亏！')
+            #return
         pass
+
+    def test_cash(self):
+        """  当根bar时间终点撮合后的可用资金，用于测试。 """
+        self.process_trading_events(at_baropen=False)
+        return self.cash()
+
+    def test_equity(self):
+        """  当根bar时间终点撮合后的权益，用于测试。 """
+        self.process_trading_events(at_baropen=False)
+        return self.equity()
+
+
+class StrategyContext(object):
+    def __init__(self, name):
+        self.name = name
+        # 0: line_marks, 1: text_marks
+        self._series = {}  # {{}}
+        self._technicals = {}
+        self._normal_vars= {}
+        self._all_vars = {}
+        self._s_cur_pcontract = ""
+
+    def set_cur_pcontract(self, s_pcontract):
+        self._s_cur_pcontract = s_pcontract
 
     def __getattr__(self, name):
         try:
@@ -247,7 +378,7 @@ class StrategyContext(object):
                                                        {})
             normal_vars[name] = value
 
-    def update_strategy_vars(self, curbar):
+    def update_user_vars(self, curbar):
         # Update series defined by user if exist.
         series = self._series.get(self._s_cur_pcontract, {}).values()
         for s in series:

@@ -3,10 +3,9 @@
 import six
 from collections import OrderedDict
 from datetime import datetime
-import progressbar
 from quantdigger.config import settings
 from quantdigger.datasource.data import DataManager
-from quantdigger.engine.context import context, data_context, strategy_context
+from quantdigger.engine.context import Context
 from quantdigger.engine.profile import Profile
 from quantdigger.util import elogger as logger
 from quantdigger.util import deprecated
@@ -38,6 +37,7 @@ class ExecuteUnit(object):
         pcontracts = list(map(lambda x: x.upper(), pcontracts))
         self.pcontracts = pcontracts
         self._combs = []
+        self._contexts = []
         self._data_manager = DataManager()
         # str(PContract): DataWrapper
         if settings['source'] == 'csv':
@@ -49,7 +49,6 @@ class ExecuteUnit(object):
                                                            n,
                                                            spec_date)
         self._all_pcontracts = list(self._all_data.keys())
-        self.context = context.Context(self._all_data, self._max_window)
 
     @deprecated
     def _parse_pcontracts(self, pcontracts):
@@ -94,7 +93,7 @@ class ExecuteUnit(object):
                             rst.append(pcon)
         return rst
 
-    def add_comb(self, comb, settings):
+    def add_comb(self, comb: "list(Strategy)", settings):
         """ 添加策略组合组合
 
         Args:
@@ -115,108 +114,96 @@ class ExecuteUnit(object):
         assert(len(settings['ratio']) == num_strategy)
         assert(sum(settings['ratio']) - 1.0 < 0.000001)
         assert(num_strategy >= 1)
-        ctxs = []
-        for i, s in enumerate(comb):
+
+        for i, strategy in enumerate(comb):
             iset = {}
             if settings:
                 iset = {'capital': settings['capital'] * settings['ratio'][i]}
-            ctxs.append(strategy_context.StrategyContext(s.name, iset))
-        self.context.add_strategy_context(ctxs)
-        return Profile(ctxs,
+                self._contexts.append(
+                    Context(self._all_data, strategy.name,
+                            iset, strategy, self._max_window))
+        marks = [ctx.marks for ctx in self._contexts]
+        blotters = [ctx.blotter for ctx in self._contexts]
+        return Profile(marks, blotters,
                        self._all_data,
                        self.pcontracts[0],
                        len(self._combs) - 1)
 
     def _init_strategies(self):
         for s_pcontract in self._all_pcontracts:
-            self.context.switch_to_pcontract(s_pcontract)
-            self.context.update_strategies_env(self._combs, s_pcontract)
-            for i, combination in enumerate(self._combs):
-                for j, s in enumerate(combination):
-                    self.context.switch_to_strategy(i, j)
-                    s.on_init(self.context)
+            for context in self._contexts:
+                context.switch_to_pcontract(s_pcontract)
+                context.update_strategies_env(s_pcontract)
+                context.strategy.on_init(context)
 
     def run(self):
-        # 初始化策略自定义时间序列变量
         logger.info("runing strategies...")
+        # 初始化策略自定义时间序列变量
         self._init_strategies()
-        pbar = progressbar.ProgressBar().start()
-        # todo 对单策略优化
+
         has_next = True
         while True:
             # Feeding data of latest.
-            toremove = []
+            toremove = set()
             for s_pcontract in self._all_pcontracts:
-                self.context.switch_to_pcontract(s_pcontract)
-                has_next = self.context.rolling_forward()
-                if not has_next:
-                    toremove.append(s_pcontract)
-            #
+                for context in self._contexts:
+                    context.switch_to_pcontract(s_pcontract)
+                    has_next = context.rolling_forward()
+                    if not has_next:
+                        toremove.add(s_pcontract)
             if toremove:
                 for s_pcontract in toremove:
                     self._all_pcontracts.remove(s_pcontract)
                 if len(self._all_pcontracts) == 0:
                     # 策略退出后的处理
-                    self.context.switch_to_pcontract(self._default_pcontract)
-                    self.context.update_strategies_env(self._combs,
-                                                       self._default_pcontract)
-                    for i, combination in enumerate(self._combs):
-                        for j, s in enumerate(combination):
-                            self.context.switch_to_strategy(i, j)
-                            s.on_exit(self.context)
-                    pbar.finish()
+                    for context in self._contexts:
+                        context.switch_to_pcontract(self._default_pcontract)
+                        context.update_strategies_env(self._default_pcontract)
+                        # 异步情况下不同策略的结束时间不一样。
+                        context.strategy.on_exit(context)
                     return
 
-            self.context.on_bar = False
             # Updating global context variables like
             # close price and context time.
             for s_pcontract in self._all_pcontracts:
-                self.context.update_system_vars_of_pcontract(s_pcontract)
+                for context in self._contexts:
+                    context.switch_to_pcontract(s_pcontract)
+                    if context.pcontract_time_aligned():
+                        context.update_system_vars()
+                        context._cur_data_context.has_pending_data = False
             # Calculating user context variables.
             for s_pcontract in self._all_pcontracts:
                 # Iterating over combinations.
-                self.context.switch_to_pcontract(s_pcontract)
-                if not self.context.pcontract_time_aligned():
-                    continue
-                self.context.update_strategies_env(self._combs, s_pcontract)
-                for i, combination in enumerate(self._combs):
-                    # Iterating over strategies.
-                    for j, s in enumerate(combination):
-                        self.context.switch_to_strategy(i, j)
-                        self.context.update_strategy_vars(i, j)
-                        s.on_symbol(self.context)
+                for context in self._contexts:
+                    context.switch_to_pcontract(s_pcontract)
+                    if not context.pcontract_time_aligned():
+                        continue
+                    context.update_strategies_env(s_pcontract)
+                    context.update_user_vars()
+                    context.on_bar = False
+                    context.strategy.on_symbol(context)
 
-            # 确保单合约回测的默认值
-            self.context.switch_to_pcontract(self._default_pcontract)
-            self.context.update_strategies_env(self._combs,
-                                               self._default_pcontract)
-            self.context.on_bar = True
             # 遍历组合策略每轮数据的最后处理
             tick_test = settings['tick_test']
-            for i, combination in enumerate(self._combs):
-                # six.print_(self.context.ctx_datetime, "--")
-                for j, s in enumerate(combination):
-                    self.context.switch_to_strategy(i, j)
-                    # 确保交易状态是基于开盘时间的。
-                    self.context.process_trading_events(at_baropen=True)
-                    s.on_bar(self.context)
-                    if not tick_test:
-                        # 保证有可能在当根Bar成交
-                        self.context.process_trading_events(at_baropen=False)
+            for context in self._contexts:
+                # 确保单合约回测的默认值
+                context.switch_to_pcontract(self._default_pcontract)
+                context.update_strategies_env(self._default_pcontract)
+                context.on_bar = True
+                # 确保交易状态是基于开盘时间的。
+                context.process_trading_events(at_baropen=True)
+                context.strategy.on_bar(context)
+                if not tick_test:
+                    # 保证有可能在当根Bar成交
+                    context.process_trading_events(at_baropen=False)
+                context.ctx_datetime = datetime(2100, 1, 1)
+                context.ctx_curbar += 1
 
-            # log.info(self.context.ctx_datetime)
-            self.context.ctx_datetime = datetime(2100, 1, 1)
-            self.context.ctx_curbar += 1
-            if self.context.ctx_curbar <= self._max_window:
-                pbar.update(self.context.ctx_curbar * 100.0 / self._max_window)
-
-        pbar.finish()
 
     def _load_data(self, strpcons, dt_start, dt_end, n, spec_date):
         all_data = OrderedDict()
         max_window = -1
         logger.info("loading data...")
-        pbar = progressbar.ProgressBar().start()
         pcontracts = [PContract.from_string(s) for s in strpcons]
         pcontracts = sorted(pcontracts, key=PContract.__str__, reverse=True)
         for i, pcon in enumerate(pcontracts):
@@ -226,18 +213,16 @@ class ExecuteUnit(object):
                 dt_end = spec_date[strpcon][1]
             assert(dt_start < dt_end)
             if n:
-                wrapper = self._data_manager.get_last_bars(strpcon, n)
+                raw_data = self._data_manager.get_last_bars(strpcon, n)
             else:
-                wrapper = self._data_manager.get_bars(strpcon, dt_start, dt_end)
-            if len(wrapper) == 0:
+                raw_data = self._data_manager.get_bars(strpcon, dt_start, dt_end)
+            if len(raw_data) == 0:
                 continue
-            all_data[strpcon] = data_context.DataContext(wrapper)
-            max_window = max(max_window, len(wrapper))
-            pbar.update(i * 100.0 / len(strpcons))
-            # progressbar.log('')
+            all_data[strpcon] = raw_data
+            max_window = max(max_window, len(raw_data))
+
         if n:
             assert(max_window <= n)
-        pbar.finish()
         if len(all_data) == 0:
             assert(False)
             # @TODO raise

@@ -21,6 +21,7 @@ from quantdigger import (
 
 
 class TestSeries(unittest.TestCase):
+#class TestSeries(object):
     """
     测试：
     * 序列变量
@@ -29,15 +30,13 @@ class TestSeries(unittest.TestCase):
         3) 序列变量和数值的运算。ctx.open-0
         4) NumberSeries.DEFAULT_VALUE, DateTimeSeries.DEFAULT_VALUE
         5) open, close, high, low, volume, datetime等系统序列变量值。
-    * 普通变量。   ctx.curbar_list
-    * ctx.curbar。  ctx.curbar_list
+    * ctx.curbar。
     """
     def test_case(self):
         close, open, dt, high, low, volume = [], [], [], [], [], []
         open3, dt3 = [], []
         operator_test = []
         user_vars = {
-            'curbar_list': [],
             'numseries': [],
             'numseries3': [],
             'dtseries': [],
@@ -49,7 +48,6 @@ class TestSeries(unittest.TestCase):
                 ctx.ma3 = MA(ctx.close, 3)
                 ctx.numseries = NumberSeries()
                 ctx.dtseries = DateTimeSeries()
-                ctx.curbar_list = []
 
             def on_symbol(self, ctx):
                 # @TODO * /
@@ -73,11 +71,9 @@ class TestSeries(unittest.TestCase):
                 elif ctx.curbar >= 300:
                     ctx.dtseries.update(datetime.datetime(3000, 1, 1))
                     ctx.numseries.update(300)
-                ctx.curbar_list.append(ctx.curbar)
                 user_vars['numseries3'].append(ctx.numseries[3])
                 user_vars['numseries'].append(ctx.numseries[0])
                 user_vars['dtseries'].append(ctx.dtseries[0])
-                user_vars['curbar_list'] = ctx.curbar_list
 
         set_symbols(['BB.TEST-1.Minute'])
         add_strategy([DemoStrategy('A1')])
@@ -106,8 +102,6 @@ class TestSeries(unittest.TestCase):
         self.assertFalse(source.equals(target), "系统时间序列变量反测试出错")
 
         # ctx.curbar，用户普通变量测试
-        for i in range(0, len(user_vars['curbar_list'])):
-            self.assertTrue(i + 1 == user_vars['curbar_list'][i])
         self.assertTrue(len(user_vars['numseries'])==len(open) and len(open)>0, '系列变量长度不一致')
         logger.info('-- 用户普通变量测试成功 --')
         logger.info('-- curbar测试成功 --')
@@ -252,14 +246,15 @@ class TestMainFunction(unittest.TestCase):
 
             def on_symbol(self, ctx):
                 # six.print_(ctx.strategy, ctx.pcontract)
-                on_symbol['combination'].add((str(ctx.pcontract), ctx.strategy))
+                on_symbol['combination'].add((str(ctx.pcontract),
+                                              ctx.strategy_name))
                 on_symbol['step_num'] += 1
 
             def on_bar(self, ctx):
-                on_bar['strategy'].append(ctx.strategy)
+                on_bar['strategy'].append(ctx.strategy_name)
 
             def on_exit(self, ctx):
-                on_exit['strategy'].append(ctx.strategy)
+                on_exit['strategy'].append(ctx.strategy_name)
 
         set_symbols(['BB.TEST-1.Minute', 'AA.TEST-1.Minute'])
         add_strategy([DemoStrategy('A1'), DemoStrategy('A2')])
@@ -313,7 +308,7 @@ class TestTimeAlign(unittest.TestCase):
 
             def on_symbol(self, ctx):
                 on_symbol_timestep.append("%s %s %s %s" % (ctx.pcontract,
-                                          ctx.strategy, ctx.datetime, ctx.curbar))
+                                          ctx.strategy_name, ctx.datetime, ctx.curbar))
 
             def on_bar(self, ctx):
                 t = ctx['oneday.TEST-1.Minute']

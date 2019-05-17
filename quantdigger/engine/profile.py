@@ -18,22 +18,16 @@ from quantdigger.datastruct import (
 
 class Profile(object):
     """ 组合结果 """
-    def __init__(self, scontexts, dcontexts, strpcon, i):
+    def __init__(self, marks, blotters, raw_data, strpcon, i):
         """
-
-        Args:
-            scontexts (list): 策略上下文集合
-            dcontexts (list): 数据上下文集合
-            strpcon (str): 主合约
-            i (int): 当前profile所对应的组合索引
         """
-        self._marks = [ctx.marks for ctx in scontexts]
-        self._blts = [ctx.blotter for ctx in scontexts]
-        self._dcontexts = {}
+        self._marks = marks
+        self._blts = blotters
+        self._data = {}
         self._ith_comb = i   # 对应于第几个组合
         self._main_pcontract = strpcon
-        for key, value in six.iteritems(dcontexts):
-            self._dcontexts[key] = value
+        for key, value in six.iteritems(raw_data):
+            self._data[key] = value
 
     def name(self, j=None):
         if j is not None:
@@ -150,11 +144,11 @@ class Profile(object):
         """
         pcon = strpcon if strpcon else self._main_pcontract
         if j is not None:
-            return {v.name: v for v in self._dcontexts[pcon].
+            return {v.name: v for v in self._data[pcon].
                     technicals[self._ith_comb][j].values()}
         rst = {}
         for j in range(0, len(self._blts)):
-            t = {v.name: v for v in self._dcontexts[pcon].
+            t = {v.name: v for v in self._data[pcon].
                  technicals[self._ith_comb][j].values()}
             rst.update(t)
         return rst
@@ -172,7 +166,7 @@ class Profile(object):
         if not strpcon:
             strpcon = self._main_pcontract
         strpcon = strpcon.upper()
-        return self._dcontexts[strpcon].raw_data
+        return self._data[strpcon]
 
     def _update_positions(self, current_positions, deal_positions, trans):
         """ 根据交易明细计算开平仓对。 """

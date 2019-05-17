@@ -3,17 +3,22 @@ import six
 import datetime
 
 from quantdigger.engine.series import SeriesBase
-from quantdigger.datastruct import (
-    Direction,
-    PriceType,
-    Contract,
+from .data_context import DataContext
+from .strategy_context import (
+    PlotterDelegator,
+    TradingDelegator,
+    StrategyContext
 )
+from quantdigger.datastruct import PContract
 from quantdigger.engine.series import DateTimeSeries
 
 
-class Context(object):
+class Context(PlotterDelegator, TradingDelegator):
     """ 上下文"""
-    def __init__(self, data, max_window):
+    def __init__(self, data: "dict((s_pcon, DataFrame))",
+                 name, settings, strategy, max_window):
+        TradingDelegator.__init__(self, name, settings)
+        PlotterDelegator.__init__(self)
         self.ctx_dt_series = DateTimeSeries(
             [datetime.datetime(2100, 1, 1)] * max_window,
             'universal_time')
@@ -21,57 +26,39 @@ class Context(object):
         self.ctx_curbar = 0  # update by ExecuteUnit
 
         self.on_bar = False  # pass to on_bar function or on_symbol function
-        self._strategy_contexts = []
-        self._cur_strategy_context = None
+        self.strategy = strategy
+        self._cur_strategy_context = StrategyContext(strategy.name)
         self._cur_data_context = None
         self._data_contexts = {}       # str(PContract): DataContext
-        for key, value in six.iteritems(data):
-            self._data_contexts[key] = value
+        self._strategy_contexts = {}  # TODO
+        # latest price data
+        self._ticks = {}  # Contract -> float
+        self._bars = {}   # Contract -> Bar
+        self._init_data_context(data)
+
+    def _init_data_context(self, data: "Dict((strpcon, DataFrame))"):
+        for key, raw_data in six.iteritems(data):
+            data_context = DataContext(PContract.from_string(key), raw_data)
+            self._data_contexts[key] = data_context
             # PContract -- 'IF000.SHEF-10.Minutes'
             # 简化策略用户的合约输入。
             symbol_exchange = key.split('-')[0]
             num_same_contract = filter(
                 lambda x: x.startswith(symbol_exchange), data.keys())
             if num_same_contract == 1:
-                self._data_contexts[symbol_exchange] = value
+                self._data_contexts[symbol_exchange] = data_context
 
             symbol = key.split('.')[0]
             num_same_contract = filter(
                 lambda x: x.startswith(symbol), data.keys())
             if num_same_contract == 1:
-                self._data_contexts[symbol] = value
-        # latest price data
-        self._ticks = {}  # Contract -> float
-        self._bars = {}   # Contract -> Bar
-
-    def clone(self, obj):
-        ctx = Context(None, 1)
-        ctx.ctx_dt_series = obj.ctx_dt_series
-        ctx.ctx_datetime = obj.ctx_datetime
-        ctx.ctx_curbar= obj.ctx_curbar
-        ctx.ctx_curbar= obj.ctx_curbar
-        ctx.on_bar = obj.on_bar
-        ctx._strategy_contexts = obj._strategy_contexts
-        ctx._cur_strategy_context = obj._cur_strategy_context
-        ctx._cur_data_context = obj._cur_data_context
-        ctx._data_contexts = obj._data_contexts
-        ctx._ticks = obj._ticks
-        ctx._bars = obj._bars
-        return ctx
-
-    def add_strategy_context(self, ctxs):
-        self._strategy_contexts.append(ctxs)
+                self._data_contexts[symbol] = data_context
 
     def switch_to_pcontract(self, s_pcontract):
         self._cur_data_context = self._data_contexts[s_pcontract]
 
-    def update_strategies_env(self, strategies, s_pcontract):
-        for ith_comb, combination in enumerate(strategies):
-            for jth_strategy, s in enumerate(combination):
-                self._strategy_contexts[ith_comb][jth_strategy].set_cur_pcontract(s_pcontract)
-
-    def switch_to_strategy(self, ith_comb, ith_strategy):
-        self._cur_strategy_context = self._strategy_contexts[ith_comb][ith_strategy]
+    def update_strategies_env(self, s_pcontract):
+        self._cur_strategy_context.set_cur_pcontract(s_pcontract)
 
     def pcontract_time_aligned(self):
         return (self._cur_data_context.datetime[0] <= self.ctx_datetime and
@@ -83,7 +70,7 @@ class Context(object):
 
     def rolling_forward(self):
         """ 更新最新tick价格，最新bar价格, 环境时间。 """
-        if self._cur_data_context.new_row:
+        def update_context_datetime():
             self.ctx_dt_series.curbar = self.ctx_curbar
             self.ctx_datetime = min(self._cur_data_context.next_datetime,
                                     self.ctx_datetime)
@@ -91,31 +78,23 @@ class Context(object):
                 self.ctx_dt_series.data[self.ctx_curbar] = self.ctx_datetime
             except IndexError:
                 self.ctx_dt_series.data.append(self.ctx_datetime)
-            return True
 
+        if self._cur_data_context.has_pending_data:
+            update_context_datetime()
+            return True
         hasnext, data = self._cur_data_context.rolling_forward()
         if not hasnext:
             return False
-
-        self.ctx_dt_series.curbar = self.ctx_curbar
-        self.ctx_datetime = min(
-            self._cur_data_context.next_datetime, self.ctx_datetime)
-        try:
-            self.ctx_dt_series.data[self.ctx_curbar] = self.ctx_datetime
-        except IndexError:
-            self.ctx_dt_series.data.append(self.ctx_datetime)
+        update_context_datetime()
         return True
 
-    def update_strategy_vars(self, comb_index, strategy_index):
+    def update_user_vars(self):
         """ 更新用户在策略中定义的变量, 如指标等。 """
-        self._cur_strategy_context.update_strategy_vars(
+        self._cur_strategy_context.update_user_vars(
             self._cur_data_context._curbar)
 
-    def update_system_vars_of_pcontract(self, s_pcontract):
+    def update_system_vars(self):
         """ 更新用户在策略中定义的变量, 如指标等。 """
-        self.switch_to_pcontract(s_pcontract)
-        if not self.pcontract_time_aligned():
-            return
         self._cur_data_context.update_system_vars()
         self._ticks[self._cur_data_context.contract] = \
             self._cur_data_context.close[0]
@@ -129,9 +108,9 @@ class Context(object):
                 self._cur_data_context.bar
 
     def process_trading_events(self, at_baropen):
-        self._cur_strategy_context.update_environment(
+        super().update_environment(
             self.ctx_datetime, self._ticks, self._bars)
-        self._cur_strategy_context.process_trading_events(at_baropen)
+        super().process_trading_events(at_baropen)
 
     def __getitem__(self, strpcon):
         """ 获取跨品种合约 """
@@ -148,8 +127,10 @@ class Context(object):
     def __setattr__(self, name, value):
         if name in [
                 '_data_contexts', '_cur_data_context', '_cur_strategy_context',
-                '_strategy_contexts', 'ctx_dt_series', '_ticks', '_bars',
-                '_trading', 'on_bar', 'ctx_curbar', 'ctx_datetime'
+                'ctx_dt_series', '_ticks', '_bars', 'strategy',
+                '_trading', 'on_bar', 'ctx_curbar', 'ctx_datetime',
+                'marks', 'blotter', 'exchange', '_orders', '_datetime',
+                '_cancel_now', 'events_pool', '_strategy_contexts'
         ]:
             super(Context, self).__setattr__(name, value)
         else:
@@ -159,7 +140,7 @@ class Context(object):
             self._cur_strategy_context.add_item(name, value)
 
     @property
-    def strategy(self):
+    def strategy_name(self):
         """ 当前策略名 """
         return self._cur_strategy_context.name
 
@@ -211,180 +192,6 @@ class Context(object):
         """ k线时间序列 """
         if self.on_bar:
             return self.ctx_dt_series
-            # return self._cur_data_context.datetime
         else:
             return self._cur_data_context.datetime
 
-    @property
-    def open_orders(self):
-        """ 未成交的订单 """
-        return list(self._cur_strategy_context.open_orders)
-
-    def buy(self, price, quantity, symbol=None):
-        """ 开多仓
-
-        Args:
-            price (float): 价格, 0表市价。
-            quantity (int): 数量。
-            symbol (str): 合约
-        """
-        if not self.on_bar:
-            raise Exception('只有on_bar函数内能下单！')
-        if symbol:
-            contract = Contract(symbol) if isinstance(symbol, str) else symbol
-        else:
-            contract = self._cur_data_context.contract
-        price_type = PriceType.MKT if price == 0 else PriceType.LMT
-        self._cur_strategy_context.buy(price,
-                                       quantity, price_type,
-                                       contract)
-
-    def sell(self, price, quantity, symbol=None):
-        """ 平多仓。
-
-        Args:
-           price (float): 价格, 0表市价。
-           quantity (int): 数量。
-           symbol (str): 合约
-        """
-        if not self.on_bar:
-            raise Exception('只有on_bar函数内能下单！')
-        if symbol:
-            contract = Contract(symbol) if isinstance(symbol, str) else symbol
-        else:
-            contract = self._cur_data_context.contract
-        price_type = PriceType.MKT if price == 0 else PriceType.LMT
-        self._cur_strategy_context.sell(price,
-                                        quantity, price_type,
-                                        contract)
-
-    def short(self, price, quantity, symbol=None):
-        """ 开空仓
-
-        Args:
-            price (float): 价格, 0表市价。
-            quantity (int): 数量。
-            symbol (str): 合约
-        """
-        if not self.on_bar:
-            raise Exception('只有on_bar函数内能下单！')
-        if symbol:
-            contract = Contract(symbol) if isinstance(symbol, str) else symbol
-        else:
-            contract = self._cur_data_context.contract
-        price_type = PriceType.MKT if price == 0 else PriceType.LMT
-        self._cur_strategy_context.short(price,
-                                         quantity, price_type,
-                                         contract)
-
-    def cover(self, price, quantity, symbol=None):
-        """ 平空仓。
-
-        Args:
-           price (float): 价格, 0表市价。
-           quantity (int): 数量。
-           symbol (str): 合约
-        """
-        if not self.on_bar:
-            raise Exception('只有on_bar函数内能下单！')
-        if symbol:
-            contract = Contract(symbol) if isinstance(symbol, str) else symbol
-        else:
-            contract = self._cur_data_context.contract
-        price_type = PriceType.MKT if price == 0 else PriceType.LMT
-        self._cur_strategy_context.cover(price,
-                                         quantity, price_type,
-                                         contract)
-
-    def position(self, direction='long', symbol=None):
-        """ 合约当前持仓仓位。
-
-        Args:
-            direction (str/int): 持仓方向。多头 - 'long' / 1 ；空头 - 'short'  / 2
-            , 默认为多头。
-
-            symbol (str): 字符串合约，默认为None表示主合约。
-
-        Returns:
-            Position. 该合约的持仓
-        """
-        if not self.on_bar:
-            raise Exception('只有on_bar函数内能查询当前持仓！')
-        direction = Direction.arg_to_type(direction)
-        contract = Contract(symbol) if symbol else \
-            self._cur_data_context.contract
-        # @TODO assert direction
-        return self._cur_strategy_context.position(contract, direction)
-
-    def all_positions(self):
-        """ 返回所有持仓列表 [Position] """
-        return self._cur_strategy_context.all_positions()
-
-    def pos(self, direction='long', symbol=None):
-        """  合约的当前可平仓位。
-
-        Args:
-            direction (str/int): 持仓方向。多头 - 'long' / 1 ；空头 - 'short'  / 2
-            , 默认为多头。
-
-            symbol (str): 字符串合约，默认为None表示主合约。
-
-        Returns:
-            int. 该合约的持仓数目。
-        """
-        if not self.on_bar:
-            raise Exception('只有on_bar函数内能查询当前持仓！')
-        direction = Direction.arg_to_type(direction)
-        # @TODO symbol xxxxx
-        contract = Contract(symbol) if symbol else \
-            self._cur_data_context.contract
-        # @TODO assert direction
-        return self._cur_strategy_context.pos(contract, direction)
-
-    def cancel(self, orders):
-        """ 撤单 """
-        self._cur_strategy_context.cancel(orders)
-
-    def cash(self):
-        """ 现金。 """
-        if not self.on_bar:
-            raise Exception('只有on_bar函数内能查询可用资金！')
-        return self._cur_strategy_context.cash()
-
-    def equity(self):
-        """ 当前权益 """
-        if not self.on_bar:
-            raise Exception('只有on_bar函数内能查询当前权益！')
-        return self._cur_strategy_context.equity()
-
-    def profit(self, contract=None):
-        """ 当前持仓的历史盈亏 """
-        # if not self.on_bar:
-            # logger.warn('只有on_bar函数内能查询总盈亏！')
-            # return
-        pass
-
-    def plot_line(self, name, ith_window, x, y, styles, lw=1, ms=10, twinx=False):
-        self._cur_strategy_context.plot_line(name, ith_window - 1, x - 1, float(y),
-                                            styles, lw, ms, twinx)
-
-    def plot_text(self, name, ith_window, x, y, text, color='black', size=15, rotation=0):
-        self._cur_strategy_context.plot_text(name, ith_window-1, x-1, float(y),
-                                                text, color, size, rotation)
-
-    def day_profit(self, contract=None):
-        """ 当前持仓的浮动盈亏 """
-        #if not self.on_bar:
-            #logger.warn('只有on_bar函数内能查询浮动盈亏！')
-            #return
-        pass
-
-    def test_cash(self):
-        """  当根bar时间终点撮合后的可用资金，用于测试。 """
-        self.process_trading_events(at_baropen=False)
-        return self.cash()
-
-    def test_equity(self):
-        """  当根bar时间终点撮合后的权益，用于测试。 """
-        self.process_trading_events(at_baropen=False)
-        return self.equity()

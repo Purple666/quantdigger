@@ -51,6 +51,14 @@ class Strategy(object):
         """初始化数据"""
         return
 
+    def on_symbol_init(self, ctx):
+        """初始化数据"""
+        return
+
+    def on_symbol_step(self, ctx):
+        """ 逐合约逐根k线运行 """
+        return
+
     def on_symbol(self, ctx):
         """ 逐合约逐根k线运行 """
         return
