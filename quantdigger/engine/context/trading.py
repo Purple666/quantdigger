@@ -1,10 +1,6 @@
-# -*- coding: utf-8 -*-
-##
-# @file data_context.py
-# @brief
-# @author wondereamer
-# @version 0.1
-# @date 2016-11-27
+#!/usr/bin/env python
+# encoding: utf-8
+
 
 import copy
 import six
@@ -12,8 +8,6 @@ from six.moves import queue
 from quantdigger.engine.blotter import SimpleBlotter
 from quantdigger.engine.exchange import Exchange
 from quantdigger.event import Event, EventsPool, SignalEvent, OnceEvent
-from quantdigger.engine.series import SeriesBase
-from quantdigger.technicals.base import TechnicalBase
 from quantdigger.datastruct import (
     Order,
     TradeSide,
@@ -22,46 +16,6 @@ from quantdigger.datastruct import (
     PriceType,
     Contract
 )
-
-
-class PlotterDelegator(object):
-    """docstring for PlotterDele"""
-    def __init__(self):
-        self.marks = [{}, {}]
-
-    def plot_line(self, name, ith_window, x, y,
-                  styles, lw=1, ms=10, twinx=False):
-        """ 绘制曲线
-
-        Args:
-            name (str): 标志名称
-            ith_window (int): 在第几个窗口显示，从1开始。
-            x (datetime): 时间坐标
-            y (float): y坐标
-            styles (str): 控制颜色，线的风格，点的风格
-            lw (int): 线宽
-            ms (int): 点的大小
-        """
-        mark = self.marks[0].setdefault(name, [])
-        mark.append((ith_window - 1, twinx, x - 1, float(y), styles, lw, ms))
-
-    def plot_text(self, name, ith_window, x, y, text,
-                  color='black', size=15, rotation=0):
-
-        """ 绘制文本
-
-        Args:
-            name (str): 标志名称
-            ith_window (int): 在第几个窗口显示，从1开始。
-            x (float): x坐标
-            y (float): y坐标
-            text (str): 文本内容
-            color (str): 颜色
-            size (int): 字体大小
-            rotation (float): 旋转角度
-        """
-        mark = self.marks[1].setdefault(name, [])
-        mark.append((ith_window - 1, x - 1, float(y), text, color, size, rotation))
 
 
 class TradingDelegator(object):
@@ -134,13 +88,13 @@ class TradingDelegator(object):
         if symbol:
             contract = Contract(symbol) if isinstance(symbol, str) else symbol
         else:
-            contract = self._cur_data_context.contract
+            contract = self.contract
         price_type = PriceType.MKT if price == 0 else PriceType.LMT
         self._orders.append(Order(
             None,
             contract,
             price_type,
-            TradeSide.KAI,
+            TradeSide.OPEN,
             Direction.LONG,
             float(price),
             quantity
@@ -159,13 +113,13 @@ class TradingDelegator(object):
         if symbol:
             contract = Contract(symbol) if isinstance(symbol, str) else symbol
         else:
-            contract = self._cur_data_context.contract
+            contract = self.contract
         price_type = PriceType.MKT if price == 0 else PriceType.LMT
         self._orders.append(Order(
             None,
             contract,
             price_type,
-            TradeSide.PING,
+            TradeSide.CLOSE,
             Direction.LONG,
             float(price),
             quantity
@@ -184,13 +138,13 @@ class TradingDelegator(object):
         if symbol:
             contract = Contract(symbol) if isinstance(symbol, str) else symbol
         else:
-            contract = self._cur_data_context.contract
+            contract = self.contract
         price_type = PriceType.MKT if price == 0 else PriceType.LMT
         self._orders.append(Order(
             None,
             contract,
             price_type,
-            TradeSide.KAI,
+            TradeSide.OPEN,
             Direction.SHORT,
             float(price),
             quantity
@@ -209,13 +163,13 @@ class TradingDelegator(object):
         if symbol:
             contract = Contract(symbol) if isinstance(symbol, str) else symbol
         else:
-            contract = self._cur_data_context.contract
+            contract = self.contract
         price_type = PriceType.MKT if price == 0 else PriceType.LMT
         self._orders.append(Order(
             None,
             contract,
             price_type,
-            TradeSide.PING,
+            TradeSide.CLOSE,
             Direction.SHORT,
             float(price),
             quantity
@@ -272,7 +226,7 @@ class TradingDelegator(object):
             raise Exception('只有on_bar函数内能查询当前持仓！')
         direction = Direction.arg_to_type(direction)
         contract = Contract(symbol) if symbol else \
-            self._cur_data_context.contract
+            self.contract
         # @TODO assert direction
         try:
             poskey = PositionKey(contract, direction)
@@ -297,7 +251,7 @@ class TradingDelegator(object):
         direction = Direction.arg_to_type(direction)
         # @TODO symbol xxxxx
         contract = Contract(symbol) if symbol else \
-            self._cur_data_context.contract
+            self.contract
         # @TODO assert direction
         try:
             poskey = PositionKey(contract, direction)
@@ -320,14 +274,14 @@ class TradingDelegator(object):
     def profit(self, contract=None):
         """ 当前持仓的历史盈亏 """
         # if not self.on_bar:
-            # logger.warn('只有on_bar函数内能查询总盈亏！')
+            # log.warn('只有on_bar函数内能查询总盈亏！')
             # return
         pass
 
     def day_profit(self, contract=None):
         """ 当前持仓的浮动盈亏 """
         #if not self.on_bar:
-            #logger.warn('只有on_bar函数内能查询浮动盈亏！')
+            #log.warn('只有on_bar函数内能查询浮动盈亏！')
             #return
         pass
 
@@ -340,56 +294,3 @@ class TradingDelegator(object):
         """  当根bar时间终点撮合后的权益，用于测试。 """
         self.process_trading_events(at_baropen=False)
         return self.equity()
-
-
-class StrategyContext(object):
-    def __init__(self, name):
-        self.name = name
-        # 0: line_marks, 1: text_marks
-        self._series = {}  # {{}}
-        self._technicals = {}
-        self._normal_vars= {}
-        self._all_vars = {}
-        self._s_cur_pcontract = ""
-
-    def set_cur_pcontract(self, s_pcontract):
-        self._s_cur_pcontract = s_pcontract
-
-    def __getattr__(self, name):
-        try:
-            return self._all_vars[self._s_cur_pcontract][name]
-        except KeyError:
-            return self.__getattribute__(name)
-
-    def add_item(self, name, value):
-        """ 添加用户初始化的变量。 """
-        assert(self._s_cur_pcontract)
-        variables = self._all_vars.setdefault(self._s_cur_pcontract, {})
-        variables[name] = value
-
-        if isinstance(value, SeriesBase):
-            series = self._series.setdefault(self._s_cur_pcontract, {})
-            series[name] = value
-        elif isinstance(value, TechnicalBase):
-            technicals = self._technicals.setdefault(self._s_cur_pcontract, {})
-            technicals[name] = value
-        else:
-            normal_vars = self._normal_vars.setdefault(self._s_cur_pcontract,
-                                                       {})
-            normal_vars[name] = value
-
-    def update_user_vars(self, curbar):
-        # Update series defined by user if exist.
-        series = self._series.get(self._s_cur_pcontract, {}).values()
-        for s in series:
-            s.update_curbar(curbar)
-            s.duplicate_last_element()
-        # Update technicals if exist.
-        technicals = self._technicals.get(self._s_cur_pcontract, {}).values()
-        for tec in technicals:
-            if tec.is_multiple:
-                for s in six.itervalues(tec.series):
-                    s.update_curbar(curbar)
-            else:
-                for s in tec.series:
-                    s.update_curbar(curbar)

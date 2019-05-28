@@ -9,14 +9,12 @@ import talib
 import numpy as np
 from quantdigger.util.log import gen_log as logger
 from quantdigger import (
-    add_strategy,
+    add_strategies,
     NumberSeries,
     DateTimeSeries,
     MA,
     BOLL,
-    set_symbols,
     Strategy,
-    run
 )
 
 
@@ -75,9 +73,12 @@ class TestSeries(unittest.TestCase):
                 user_vars['numseries'].append(ctx.numseries[0])
                 user_vars['dtseries'].append(ctx.dtseries[0])
 
-        set_symbols(['BB.TEST-1.Minute'])
-        add_strategy([DemoStrategy('A1')])
-        run()
+        add_strategies(['BB.TEST-1.Minute'], [
+            {
+                'strategy': DemoStrategy('A1'),
+                'capital': 1000000.0,
+            }
+        ])
 
         # 序列变量默认值
         self.assertTrue(NumberSeries.DEFAULT_VALUE == 0.0, "默认值测试失败")
@@ -184,9 +185,12 @@ class TestTechnical(unittest.TestCase):
                 assert(isinstance(ctx.boll['lower'], NumberSeries))
                 assert(isinstance(ctx.ma, MA))
 
-        set_symbols(['BB.TEST-1.Minute'])
-        add_strategy([DemoStrategy('A1')])
-        run()
+        add_strategies(['BB.TEST-1.Minute'], [
+            {
+                'strategy': DemoStrategy('A1'),
+                'capital': 1000000.0,
+            }
+        ])
 
         # 单值指标运算和回溯测试
         source_ma = talib.SMA(np.asarray(close), 2)
@@ -256,10 +260,25 @@ class TestMainFunction(unittest.TestCase):
             def on_exit(self, ctx):
                 on_exit['strategy'].append(ctx.strategy_name)
 
-        set_symbols(['BB.TEST-1.Minute', 'AA.TEST-1.Minute'])
-        add_strategy([DemoStrategy('A1'), DemoStrategy('A2')])
-        add_strategy([DemoStrategy('B1'), DemoStrategy('B2')])
-        run()
+        add_strategies(['BB.TEST-1.Minute', 'AA.TEST-1.Minute'], [
+            {
+                'strategy': DemoStrategy('A1'),
+                'capital': 1000000.0 * 0.5,
+            },
+            {
+                'strategy': DemoStrategy('A2'),
+                'capital': 1000000.0 * 0.5,
+            },
+            {
+                'strategy': DemoStrategy('B1'),
+                'capital': 1000000.0 * 0.5,
+            },
+            {
+                'strategy': DemoStrategy('B2'),
+                'capital': 1000000.0 * 0.5,
+            }
+        ])
+
 
         fname = os.path.join(os.getcwd(), 'data', '1MINUTE', 'TEST', 'BB.csv')
         blen = len(pd.read_csv(fname))
@@ -316,10 +335,24 @@ class TestTimeAlign(unittest.TestCase):
                 t = ctx['TWODAY.TEST-5.Second']
                 on_bar_timestep.append("%s %s %s" % (t.pcontract, t.datetime, t.curbar))
 
-        set_symbols(['TWODAY.TEST-5.Second', 'oneday.TEST-1.Minute'])
-        add_strategy([DemoStrategy('A1'), DemoStrategy('A2')])
-        add_strategy([DemoStrategy('B1'), DemoStrategy('B2')])
-        run()
+        add_strategies(['TWODAY.TEST-5.Second', 'oneday.TEST-1.Minute'], [
+            {
+                'strategy': DemoStrategy('A1'),
+                'capital': 1000000.0 * 0.5,
+            },
+            {
+                'strategy': DemoStrategy('A2'),
+                'capital': 1000000.0 * 0.5,
+            },
+            {
+                'strategy': DemoStrategy('B1'),
+                'capital': 1000000.0 * 0.5,
+            },
+            {
+                'strategy': DemoStrategy('B2'),
+                'capital': 1000000.0 * 0.5,
+            }
+        ])
 
         # on_symbol
         fname = os.path.join(os.getcwd(), 'data', 'diffPeriodOnSymbol.txt')
@@ -362,10 +395,13 @@ class TestDefaultPContract(unittest.TestCase):
                 assert(ctx.high == ctx['TWODAY.TEST-5.Second'].high)
                 assert(ctx.low == ctx['TWODAY.TEST-5.Second'].low)
 
-        set_symbols(['TWODAY.TEST-5.Second', 'TWODAY.TEST-1.Minute'])
-        add_strategy([DemoStrategy('A1')])
+        add_strategies(['TWODAY.TEST-5.Second', 'TWODAY.TEST-1.Minute'], [
+            {
+                'strategy': DemoStrategy('A1'),
+                'capital': 1000000.0 * 0.5,
+            }
+        ])
         logger.info("默认合约测试成功！")
-        run()
 
 
 if __name__ == '__main__':

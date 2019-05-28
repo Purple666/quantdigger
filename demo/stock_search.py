@@ -49,14 +49,16 @@ class DemoStrategy(Strategy):
 
 if __name__ == '__main__':
     #
-    set_symbols(['*.SH'])
-    algo = DemoStrategy('A1')
-    profile = add_strategy([algo], { 'capital': 500000000.0 })
+    profiles = add_strategies(['*.SH'], [
+        {
+            'strategy': DemoStrategy('A1'),
+            'capital': 500000000.0
+        }
+    ])
 
-    run()
 
     from quantdigger.digger import finance, plotting
-    curve = finance.create_equity_curve(profile.all_holdings())
+    curve = finance.create_equity_curve(Profile.all_holdings_sum(profiles))
     #plotting.plot_strategy(profile.data('AA.SHFE-1.Minute'), profile.technicals(0),
                             #profile.deals(0), curve.equity.values)
     ## 绘制净值曲线

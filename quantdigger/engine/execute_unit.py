@@ -7,7 +7,7 @@ from quantdigger.config import settings
 from quantdigger.datasource.data import DataManager
 from quantdigger.engine.context import Context
 from quantdigger.engine.profile import Profile
-from quantdigger.util import elogger as logger
+from quantdigger.util import log, MAX_DATETIME
 from quantdigger.util import deprecated
 from quantdigger.datastruct import PContract
 
@@ -36,13 +36,10 @@ class ExecuteUnit(object):
         self.finished_data = []
         pcontracts = list(map(lambda x: x.upper(), pcontracts))
         self.pcontracts = pcontracts
-        self._combs = []
         self._contexts = []
         self._data_manager = DataManager()
-        # str(PContract): DataWrapper
         if settings['source'] == 'csv':
             self.pcontracts = self._parse_pcontracts(self.pcontracts)
-        self._default_pcontract = self.pcontracts[0]
         self._all_data, self._max_window = self._load_data(self.pcontracts,
                                                            dt_start,
                                                            dt_end,
@@ -50,7 +47,6 @@ class ExecuteUnit(object):
                                                            spec_date)
         self._all_pcontracts = list(self._all_data.keys())
 
-    @deprecated
     def _parse_pcontracts(self, pcontracts):
         # @TODO test
         code2strpcon, exch_period2strpcon = \
@@ -93,51 +89,23 @@ class ExecuteUnit(object):
                             rst.append(pcon)
         return rst
 
-    def add_comb(self, comb: "list(Strategy)", settings):
-        """ 添加策略组合组合
-
-        Args:
-            comb (list): 一个策略组合
-        """
-        self._combs.append(comb)
-        num_strategy = len(comb)
-        if 'capital' not in settings:
-            settings['capital'] = 1000000.0  # 默认资金
-            logger.info('BackTesting with default capital 1000000.0.')
-
-        assert (settings['capital'] > 0)
-        if num_strategy == 1:
-            settings['ratio'] = [1]
-        elif num_strategy > 1 and 'ratio' not in settings:
-            settings['ratio'] = [1.0 / num_strategy] * num_strategy
-        assert('ratio' in settings)
-        assert(len(settings['ratio']) == num_strategy)
-        assert(sum(settings['ratio']) - 1.0 < 0.000001)
-        assert(num_strategy >= 1)
-
-        for i, strategy in enumerate(comb):
-            iset = {}
-            if settings:
-                iset = {'capital': settings['capital'] * settings['ratio'][i]}
-                self._contexts.append(
-                    Context(self._all_data, strategy.name,
-                            iset, strategy, self._max_window))
-        marks = [ctx.marks for ctx in self._contexts]
-        blotters = [ctx.blotter for ctx in self._contexts]
-        return Profile(marks, blotters,
-                       self._all_data,
-                       self.pcontracts[0],
-                       len(self._combs) - 1)
+    def add_strategies(self, settings):
+        for setting in settings:
+            strategy = setting['strategy']
+            ctx = Context(self._all_data, strategy.name,
+                          setting,  strategy, self._max_window)
+            ctx.data_ref.default_pcontract = self.pcontracts[0]
+            self._contexts.append(ctx)
+            yield(Profile(ctx.marks, ctx.blotter, ctx.data_ref))
 
     def _init_strategies(self):
         for s_pcontract in self._all_pcontracts:
             for context in self._contexts:
-                context.switch_to_pcontract(s_pcontract)
-                context.update_strategies_env(s_pcontract)
+                context.data_ref.switch_to_pcontract(s_pcontract)
                 context.strategy.on_init(context)
 
     def run(self):
-        logger.info("runing strategies...")
+        log.info("runing strategies...")
         # 初始化策略自定义时间序列变量
         self._init_strategies()
 
@@ -146,9 +114,10 @@ class ExecuteUnit(object):
             # Feeding data of latest.
             toremove = set()
             for s_pcontract in self._all_pcontracts:
-                for context in self._contexts:
-                    context.switch_to_pcontract(s_pcontract)
-                    has_next = context.rolling_forward()
+                for ctx in self._contexts:
+                    ctx.data_ref.switch_to_pcontract(s_pcontract)
+                    has_next = ctx.data_ref.rolling_forward(
+                        ctx.update_datetime)
                     if not has_next:
                         toremove.add(s_pcontract)
             if toremove:
@@ -156,54 +125,51 @@ class ExecuteUnit(object):
                     self._all_pcontracts.remove(s_pcontract)
                 if len(self._all_pcontracts) == 0:
                     # 策略退出后的处理
-                    for context in self._contexts:
-                        context.switch_to_pcontract(self._default_pcontract)
-                        context.update_strategies_env(self._default_pcontract)
+                    for ctx in self._contexts:
+                        ctx.data_ref.switch_to_default_pcontract()
                         # 异步情况下不同策略的结束时间不一样。
-                        context.strategy.on_exit(context)
+                        ctx.strategy.on_exit(ctx)
                     return
 
             # Updating global context variables like
             # close price and context time.
             for s_pcontract in self._all_pcontracts:
-                for context in self._contexts:
-                    context.switch_to_pcontract(s_pcontract)
-                    if context.pcontract_time_aligned():
-                        context.update_system_vars()
-                        context._cur_data_context.has_pending_data = False
+                for ctx in self._contexts:
+                    ctx.data_ref.switch_to_pcontract(s_pcontract)
+                    if ctx.data_ref.datetime_aligned(ctx.aligned_dt):
+                        ctx.data_ref.update_system_vars()
+                        ctx.data_ref.original.has_pending_data = False
             # Calculating user context variables.
             for s_pcontract in self._all_pcontracts:
                 # Iterating over combinations.
-                for context in self._contexts:
-                    context.switch_to_pcontract(s_pcontract)
-                    if not context.pcontract_time_aligned():
+                for ctx in self._contexts:
+                    ctx.data_ref.switch_to_pcontract(s_pcontract)
+                    if not ctx.data_ref.datetime_aligned(ctx.aligned_dt):
                         continue
-                    context.update_strategies_env(s_pcontract)
-                    context.update_user_vars()
-                    context.on_bar = False
-                    context.strategy.on_symbol(context)
+                    ctx.data_ref.update_user_vars()
+                    ctx.on_bar = False
+                    ctx.strategy.on_symbol(ctx)
 
             # 遍历组合策略每轮数据的最后处理
             tick_test = settings['tick_test']
-            for context in self._contexts:
+            for ctx in self._contexts:
                 # 确保单合约回测的默认值
-                context.switch_to_pcontract(self._default_pcontract)
-                context.update_strategies_env(self._default_pcontract)
-                context.on_bar = True
+                ctx.data_ref.switch_to_default_pcontract()
+                ctx.on_bar = True
                 # 确保交易状态是基于开盘时间的。
-                context.process_trading_events(at_baropen=True)
-                context.strategy.on_bar(context)
+                ctx.process_trading_events(at_baropen=True)
+                ctx.strategy.on_bar(ctx)
                 if not tick_test:
                     # 保证有可能在当根Bar成交
-                    context.process_trading_events(at_baropen=False)
-                context.ctx_datetime = datetime(2100, 1, 1)
-                context.ctx_curbar += 1
+                    ctx.process_trading_events(at_baropen=False)
+                ctx.aligned_dt = MAX_DATETIME
+                ctx.aligned_bar_index += 1
 
 
     def _load_data(self, strpcons, dt_start, dt_end, n, spec_date):
         all_data = OrderedDict()
         max_window = -1
-        logger.info("loading data...")
+        log.info("loading data...")
         pcontracts = [PContract.from_string(s) for s in strpcons]
         pcontracts = sorted(pcontracts, key=PContract.__str__, reverse=True)
         for i, pcon in enumerate(pcontracts):
